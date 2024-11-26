@@ -606,4 +606,5 @@ public class S3 {
 	public Pair<Integer,Integer> isInMiniMap(int current_screen_x, int current_screen_y) {
 		return m_map.isInMiniMap(current_screen_x, current_screen_y);
 	}
+
 }

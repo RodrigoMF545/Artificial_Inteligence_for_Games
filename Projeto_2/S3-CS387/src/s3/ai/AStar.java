@@ -3,20 +3,21 @@ package s3.ai;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.PriorityQueue;
-import java.util.Set;
 
 import s3.base.S3;
 import s3.entities.S3PhysicalEntity;
 import s3.util.Pair;
 
 public class AStar {
-    private final S3 game;
-    private final S3PhysicalEntity entity;
-    private final double start_x, start_y, goal_x, goal_y;
+
+    private Node start;
+    private Node goal;
+    private S3 game;
+    private S3PhysicalEntity entity;
+    private List<Pair<Integer, Integer>> directions;
 
     public static int pathDistance(double start_x, double start_y, double goal_x, double goal_y,
-                                    S3PhysicalEntity i_entity, S3 the_game) {
+                                   S3PhysicalEntity i_entity, S3 the_game) {
         AStar a = new AStar(start_x, start_y, goal_x, goal_y, i_entity, the_game);
         List<Pair<Double, Double>> path = a.computePath();
         if (path != null) return path.size();
@@ -25,131 +26,135 @@ public class AStar {
 
     public AStar(double start_x, double start_y, double goal_x, double goal_y,
                  S3PhysicalEntity i_entity, S3 the_game) {
-        this.start_x = start_x;
-        this.start_y = start_y;
-        this.goal_x = goal_x;
-        this.goal_y = goal_y;
-        this.entity = i_entity;
+        // Initialize start and goal nodes
+        this.start = new Node(start_x, start_y);
+        this.goal = new Node(goal_x, goal_y);
         this.game = the_game;
+        this.entity = i_entity;
+
+        // Define movement directions (4-directional grid)
+        this.directions = new ArrayList<>();
+        this.directions.add(new Pair<>(-1, 0)); // Left
+        this.directions.add(new Pair<>(1, 0));  // Right
+        this.directions.add(new Pair<>(0, -1)); // Up
+        this.directions.add(new Pair<>(0, 1));  // Down
     }
 
     public List<Pair<Double, Double>> computePath() {
-        // Inicializa os nós de início e objetivo
-        Node startNode = new Node((int) start_x, (int) start_y, 0, heuristica(start_x, start_y), null);
-        Node goalNode = new Node((int) goal_x, (int) goal_y, Double.MAX_VALUE, 0, null);
+        // Initialize the open list and closed set
+        start.g = 0;
+        start.h = heuristic(start);
 
-        // Fila de prioridade para A*
-        PriorityQueue<Node> openSet = new PriorityQueue<>();
-        Set<Pair<Integer, Integer>> closedSet = new HashSet<>();
+        ArrayList<Node> open = new ArrayList<>();
+        open.add(start);
 
-        openSet.add(startNode);
+        HashSet<Node> closed = new HashSet<>();
 
-        while (!openSet.isEmpty()) {
-            // Obtém o nó com menor fCost
-            Node currentNode = openSet.poll();
+        while (!open.isEmpty()) {
+            // Get the node with the lowest fCost
+            Node current = removeLowestF(open);
 
-            // Verifica se atingimos o objetivo
-            if (currentNode.getX() == goalNode.getX() && currentNode.getY() == goalNode.getY()) {
-                return Node.reconstructPath(currentNode);
+            // Check if we reached the goal
+            if (isGoal(current)) {
+                return getPath(current);
             }
 
-            // Marca como visitado
-            closedSet.add(new Pair<>(currentNode.getX(), currentNode.getY()));
+            // Mark the current node as visited
+            closed.add(current);
 
-            // Explorar os vizinhos
-            for (Node neighbor : getNeighbors(currentNode)) {
-                Pair<Integer, Integer> neighborPos = new Pair<>(neighbor.getX(), neighbor.getY());
+            // Explore neighbors
+            for (Pair<Integer, Integer> direction : directions) {
+                double newX = current.x + direction.m_a;
+                double newY = current.y + direction.m_b;
 
-                // Ignora se já visitado
-                if (closedSet.contains(neighborPos)) continue;
+                Node neighbor = new Node(newX, newY);
 
-                // Atualiza o custo e adiciona à fila
-                if (!openSet.contains(neighbor)) {
-                    openSet.add(neighbor);
+                if (isSpaceValid(newX, newY) && !open.contains(neighbor) && !closed.contains(neighbor)) {
+                    neighbor.parent = current;
+                    neighbor.g = current.g + 1; // Move cost
+                    neighbor.h = heuristic(neighbor);
+                    open.add(neighbor);
                 }
             }
         }
 
-        return null; // Caminho não encontrado
+        // Return null if no path is found
+        return null;
     }
 
-    private double heuristica(double x, double y) {
-        // Exemplo: Distância de Manhattan
-        return Math.abs(x - goal_x) + Math.abs(y - goal_y);
+    private boolean isSpaceValid(double x, double y) {
+        // Check boundaries and collisions
+        if (x < 0 || y < 0 || x >= game.getMap().getWidth() || y >= game.getMap().getHeight()) {
+            return false;
+        }
+
+        // Create a temporary clone of the entity to check for collisions
+        S3PhysicalEntity tempEntity = (S3PhysicalEntity) entity.clone();
+        tempEntity.setX((int) x);
+        tempEntity.setY((int) y);
+
+        return game.anyLevelCollision(tempEntity) == null;
     }
 
-    private List<Node> getNeighbors(Node node) {
-        List<Node> neighbors = new ArrayList<>();
-        // Exemplo: Gerar nós vizinhos no grid (4-direcional)
-        int[][] directions = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
-        for (int[] dir : directions) {
-            int newX = node.getX() + dir[0];
-            int newY = node.getY() + dir[1];
-            if (isValidPosition(newX, newY)) {
-                double gCost = node.getG() + 1;
-                double hCost = heuristica(newX, newY);
-                neighbors.add(new Node(newX, newY, gCost, hCost, node));
+    private List<Pair<Double, Double>> getPath(Node node) {
+        // Reconstruct the path from the goal to the start
+        List<Pair<Double, Double>> path = new ArrayList<>();
+        while (node != start) {
+            path.add(0, new Pair<>(node.x, node.y));
+            node = node.parent;
+        }
+        return path;
+    }
+
+    private boolean isGoal(Node node) {
+        // Check if the node matches the goal coordinates
+        return node.x == goal.x && node.y == goal.y;
+    }
+
+    private Node removeLowestF(ArrayList<Node> open) {
+        // Find and remove the node with the lowest fCost
+        Node lowest = null;
+        double lowestF = Double.MAX_VALUE;
+
+        for (Node node : open) {
+            double f = node.g + node.h;
+            if (f < lowestF) {
+                lowest = node;
+                lowestF = f;
             }
         }
-        return neighbors;
+
+        open.remove(lowest);
+        return lowest;
     }
 
-    private boolean isValidPosition(int x, int y) {
-        // Validação específica do jogo
-        return true; // Atualize conforme necessário
+    private double heuristic(Node node) {
+        // Use Manhattan distance as the heuristic
+        return Math.abs(goal.x - node.x) + Math.abs(goal.y - node.y);
     }
 
-    // Classe Node como interna estática
-    private static class Node implements Comparable<Node> {
-        private final int x, y;
-        private final double g, h;
-        private final Node parent;
+    // Inner class for A* nodes
+    private class Node {
+        Node parent;
+        double x, y;
+        double g, h; // Cost from start and heuristic estimate
 
-        public Node(int x, int y, double g, double h, Node parent) {
+        private Node(double x, double y) {
             this.x = x;
             this.y = y;
-            this.g = g;
-            this.h = h;
-            this.parent = parent;
-        }
-
-        public int getX() {
-            return x;
-        }
-
-        public int getY() {
-            return y;
-        }
-
-        public double getG() {
-            return g;
-        }
-
-        public double getH() {
-            return h;
-        }
-
-        public Node getParent() {
-            return parent;
-        }
-
-        public double fCost() {
-            return g + h;
         }
 
         @Override
-        public int compareTo(Node other) {
-            return Double.compare(this.fCost(), other.fCost());
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (obj == null || getClass() != obj.getClass()) return false;
+            Node other = (Node) obj;
+            return Double.compare(x, other.x) == 0 && Double.compare(y, other.y) == 0;
         }
 
-        public static List<Pair<Double, Double>> reconstructPath(Node endNode) {
-            List<Pair<Double, Double>> path = new ArrayList<>();
-            Node current = endNode;
-            while (current != null) {
-                path.add(0, new Pair<>((double) current.getX(), (double) current.getY()));
-                current = current.getParent();
-            }
-            return path;
+        @Override
+        public int hashCode() {
+            return Double.hashCode(x) + Double.hashCode(y) * 31;
         }
     }
 }
